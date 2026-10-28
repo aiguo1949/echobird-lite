@@ -1,0 +1,55 @@
+{
+    "id": "opencode",
+    "displayName": "OpenCode (CLI)",
+    "homepage": "https://opencode.ai/",
+    "docs": "https://opencode.ai/docs",
+    "github": "https://github.com/anomalyco/opencode",
+    "kind": "cli",
+    "platforms": ["windows", "macos", "linux"],
+    "install": {
+        "curl (macOS / Linux — recommended)": "curl -fsSL https://opencode.ai/v2/install | bash",
+        "curl (Windows — Git Bash / MSYS2 alternative)": "curl -fsSL https://opencode.ai/v2/install | bash",
+        "brew (macOS / Linux)": "brew install anomalyco/tap/opencode-v2",
+        "note": "OpenCode v2 uses the scoped npm package `@opencode/cli` and the official v2 shell installer. The installer resolves the current platform package from OpenCode's update API and installs the binary under ~/.opencode/bin. On native Windows, prefer npm; the curl command requires Git Bash / MSYS2 / Cygwin and must not be piped to PowerShell `iex`. Do not use the legacy Scoop or Chocolatey recipes for a v2 request because the official v2 download page does not list them as v2 channels. Verify with `opencode --version` after refreshing PATH.",
+        "npm (all platforms; preferred for native Windows)": "npm install -g @opencode/cli",
+        "bun (all supported platforms)": "bun install -g --trust @opencode/cli"
+    },
+    "install_flow": {
+        "summary": "macOS/Linux: official v2 shell installer or package manager; native Windows: scoped npm package → verify",
+        "agent_steps": [
+            "Detect OS and architecture first.",
+            "macOS / Linux: prefer `curl -fsSL https://opencode.ai/v2/install | bash` (installs the v2 prebuilt binary to ~/.opencode/bin, no Node needed). On network failure, fall back to `brew install anomalyco/tap/opencode-v2` then npm.",
+            "Windows: use `npm install -g @opencode/cli` with an installed Node/npm. The official v2 shell installer is an alternative only under Git Bash / MSYS2 / Cygwin; do not pipe it into PowerShell `iex`. Do not substitute the legacy Scoop or Chocolatey recipes for a v2 request.",
+            "npm path (all platforms): check Node/npm, then run `npm install -g @opencode/cli`. If a registry download fails, diagnose it and, with the user's mirror fallback selected, use `npm install -g @opencode/cli --registry=https://registry.npmmirror.com --fetch-timeout=600000`.",
+            "Verify with `opencode --version`. On Windows if the command isn't found after an npm install, the shim is at %APPDATA%\\npm\\opencode.cmd — restart the shell so PATH picks it up.",
+            "If an earlier npm install timed out, DO NOT immediately retry: a still-running node/postinstall may be writing to the same node_modules and a concurrent retry corrupts it. Let the runner kill the process tree first (handled automatically on timeout), or manually confirm no node/npm process is running before retrying."
+        ],
+        "tell_user": [
+            "Which install method was used (curl / scoop / choco / release binary / npm)",
+            "On Windows the npm global shim is %APPDATA%\\npm\\opencode.cmd — restart the shell if `opencode` isn't found",
+            "Verify command: `opencode --version`"
+        ]
+    },
+    "network_requirements": {
+        "test_urls": [
+            "https://opencode.ai",
+            "https://registry.npmjs.org/@opencode%2fcli",
+            "https://github.com/anomalyco/opencode"
+        ],
+        "mirrors": {
+            "npm (China)": "npm install -g @opencode/cli --registry=https://registry.npmmirror.com --fetch-timeout=600000"
+        },
+        "blocked_regions": {
+            "zh-CN": "The v2 Bash installer resolves and downloads the platform package through OpenCode's update service and the npm registry. If those hosts are unreachable, use the user's configured proxy or approved npm registry mirror; verify the download instead of assuming regional access."
+        }
+    },
+    "first_run": {
+        "description": "On first launch `opencode` opens a TUI. To use your own provider, add an OpenAI-compatible provider block in the config file, or run `/connect` and pick a provider. OpenRouter, Anthropic, and any OpenAI-compatible endpoint are supported.",
+        "config_global": "$OPENCODE_CONFIG_DIR/opencode.json(c), otherwise $XDG_CONFIG_HOME/opencode/opencode.json(c), otherwise ~/.config/opencode/opencode.json(c)",
+        "config_project": "opencode.json",
+        "verify": "opencode --version"
+    },
+    "identity_guard": {
+        "description": "OpenCode v2 is Anomaly's open-source CLI coding agent (github.com/anomalyco/opencode, branch `v2`), npm package `@opencode/cli`. It is DIFFERENT from Claude Code (Anthropic, @anthropic-ai/claude-code), Codex CLI (OpenAI, @openai/codex), and the OpenCode Desktop GUI app — a separate EchoBird tool. The old v1 npm package was `opencode-ai`; for v2 use the exact package name `@opencode/cli`."
+    }
+}

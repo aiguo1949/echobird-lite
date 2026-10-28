@@ -1,0 +1,46 @@
+{
+    "id": "openscience",
+    "displayName": "OpenScience",
+    "homepage": "https://www.openscience.sh/download",
+    "docs": "https://www.openscience.sh/docs",
+    "kind": "desktop_app",
+    "platforms": ["macos", "linux", "windows"],
+    "install": {
+        "download_page": "https://www.openscience.sh/download",
+        "windows_download_x64": "https://github.com/synthetic-sciences/OpenScience/releases/latest/download/OpenScience-windows-x64.exe",
+        "macos_download_arm64": "https://github.com/synthetic-sciences/OpenScience/releases/latest/download/OpenScience-mac-arm64.dmg",
+        "macos_download_x64": "https://github.com/synthetic-sciences/OpenScience/releases/latest/download/OpenScience-mac-x64.dmg",
+        "linux_download_x64": "https://github.com/synthetic-sciences/OpenScience/releases/latest/download/OpenScience-linux-x64.AppImage",
+        "linux_download_arm64": "https://github.com/synthetic-sciences/OpenScience/releases/latest/download/OpenScience-linux-arm64.AppImage",
+        "note": "OpenScience is an open-source, model-agnostic AI research desktop workbench. The desktop app bundles the OpenScience runtime. Its current in-app updater is macOS-only; Windows and Linux users should install newer releases from the official download page. Windows supports x64; macOS supports Apple Silicon and Intel; Linux ships x64 and arm64 AppImages. Stable macOS DMGs are signed and notarized. The Windows installer and Linux AppImages are currently unsigned, so explain the expected operating-system warning before opening them. EchoBird configures the model through OpenScience's resolved config directory (`OPENSCIENCE_CONFIG_DIR`, then `XDG_CONFIG_HOME/openscience`, then `~/.config/openscience`) and marks the local desktop onboarding complete in `settings.json`, so an EchoBird-configured third-party model does not require a Synthetic Sciences account. The desktop app must be fully restarted after an external model change. The CLI remains a separate upstream option, but desktop-app requests must use these desktop installers rather than npm, `npx synsci`, the shell installer, or CLI archives."
+    },
+    "install_flow": {
+        "summary": "Detect OS and architecture, download the matching official desktop installer, open it for the user, then let EchoBird configure a third-party model and complete local onboarding.",
+        "agent_steps": [
+            "Install only on the local machine with a graphical desktop. Detect OS and CPU architecture first. Windows supports x64 only; macOS supports arm64 and x64; Linux supports arm64 and x64. If the platform or architecture is unsupported, point the user to https://www.openscience.sh/download and do not substitute a CLI build.",
+            "Download the matching URL from install to the user's Downloads folder using a resolved full path: OpenScienceSetup.exe on Windows, OpenScience.dmg on macOS, or OpenScience.AppImage on Linux. If a latest-download URL fails, read https://www.openscience.sh/download or the official GitHub Releases page for the current desktop asset; do not use a lowercase `openscience-*` CLI archive as a desktop installer.",
+            "Before opening Windows or Linux builds, tell the user that the official build is currently unsigned and the OS may show a security warning. Do not disable SmartScreen, Gatekeeper, antivirus, or other operating-system protections.",
+            "Windows: open the downloaded NSIS installer with `Start-Process -FilePath <resolved-path>` without `-Wait`. Tell the user to choose the install directory and finish the wizard; do not invent or use silent flags. Stop the turn after handing off the installer.",
+            "macOS: open the downloaded DMG with `open <resolved-path>`, tell the user to drag OpenScience.app to Applications, then stop the turn. The stable DMG is signed and notarized; do not use the ZIP updater payload as the installer.",
+            "Linux: create `~/.local/bin` if needed, move the downloaded file to `~/.local/bin/OpenScience.AppImage`, mark it executable, and launch it detached. Tell the user exactly where it was saved and that desktop-menu integration may depend on their desktop environment; then stop the turn.",
+            "When the user returns after the installer or first launch is complete, verify OpenScience through the installed application path or OS application registration. Do not verify the desktop install with `openscience --version`, because that tests the separate CLI.",
+            "Have the user select and apply a third-party model for OpenScience in EchoBird. That operation writes the `echobird` provider and active-model selectors to `openscience.json` in OpenScience's resolved config directory, preserves unrelated settings, and sets `desktop_onboarding_version` to the supported local completion revision with `desktop_onboarding_step` set to `done` in the sibling `settings.json`. This skips only the local setup gate; it does not fabricate a Synthetic Sciences session or unlock account-only managed services.",
+            "Use Apply & Launch after model configuration. EchoBird fully restarts the desktop app so it reloads the new local configuration. Provider sign-in and credentials not managed by EchoBird remain the user's actions inside OpenScience."
+        ],
+        "tell_user": [
+            "Detected OS and architecture and the matching desktop asset",
+            "The exact saved installer or AppImage path",
+            "That Windows and Linux desktop builds are currently unsigned and may trigger an OS warning",
+            "Whether the installer or app was opened and which user steps remain",
+            "That applying an EchoBird model completes local onboarding without creating a Synthetic Sciences login",
+            "After the user finishes, whether the installed desktop app was verified and launched"
+        ]
+    },
+    "network_requirements": {
+        "test_urls": [
+            "https://www.openscience.sh/download",
+            "https://github.com/synthetic-sciences/OpenScience/releases/latest"
+        ],
+        "mirrors": {}
+    }
+}

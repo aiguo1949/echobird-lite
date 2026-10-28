@@ -1,0 +1,144 @@
+name: Sync Version Manifest
+
+# Bumps docs/api/version/index.json — the manifest the in-app updater polls.
+# Bumping `.version` here is the SINGLE trigger that makes every installed app
+# show "update available" AND (since the in-app auto-download landed,
+# 2026-06-16) one-click download + launch the installer. Because that is now
+# an auto-install for users, the bump must be the DELIBERATE FINAL STEP of a
+# release — run manually by the operator ONLY AFTER:
+#   1. the GitHub Release is published and its assets are confirmed
+#      downloadable, and
+#   2. the operator has personally tested the built installer end-to-end.
+#
+# It deliberately does NOT trigger on `release: published` (that trigger was
+# removed 2026-06-16) so that flipping the draft release to public — needed so
+# the operator can download + test it — does NOT, by itself, notify users.
+#
+# Run it from the Actions tab (workflow_dispatch) with the release tag once
+# testing succeeds. It refreshes version + date and preserves whatever Chinese
+# `releaseNotes` the release commit already wrote into the manifest.
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag to sync (e.g. v5.2.8)'
+        required: true
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Resolve tag
+        id: tag
+        run: |
+          # `release` event: github.event.release.tag_name
+          # `workflow_dispatch` event: inputs.tag
+          if [ -n "${{ github.event.release.tag_name }}" ]; then
+            echo "tag=${{ github.event.release.tag_name }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=${{ inputs.tag }}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Checkout main
+        uses: actions/checkout@v6
+        with:
+          ref: main
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Write version manifest
+        env:
+          TAG_NAME: ${{ steps.tag.outputs.tag }}
+        run: |
+          set -euo pipefail
+          VERSION="${TAG_NAME#v}"
+          DATE="$(date -u +%Y-%m-%d)"
+          MANIFEST="docs/api/version/index.json"
+          TMP="${MANIFEST}.tmp"
+          # Policy: tag annotations are English (engineering audience), the
+          # release notes are user-facing. The release commit writes the notes
+          # into the manifest; this job only refreshes version + date and
+          # preserves whatever notes are already there. Two note fields are
+          # preserved: `releaseNotes` (legacy single blob) and
+          # `releaseNotesI18n` (per-language object the in-app changelog reads).
+          # Falls back to a generic `releaseNotes` when the manifest is
+          # malformed or missing the field.
+          EXISTING_NOTES="$(jq -r '.releaseNotes // empty' "$MANIFEST" 2>/dev/null || true)"
+          if [ -z "$EXISTING_NOTES" ]; then
+            EXISTING_NOTES="Release $TAG_NAME"
+          fi
+          EXISTING_I18N="$(jq -c '.releaseNotesI18n // empty' "$MANIFEST" 2>/dev/null || true)"
+          # Build into a temp file first; only swap it into place once jq has
+          # produced a complete document. Under `set -e` a jq failure aborts the
+          # job BEFORE the mv, so a partial/empty manifest can never be pushed
+          # (a plain `> "$MANIFEST"` would truncate it before jq even runs).
+          if [ -n "$EXISTING_I18N" ]; then
+            jq -n \
+              --arg v "$VERSION" \
+              --arg d "$DATE" \
+              --arg n "$EXISTING_NOTES" \
+              --argjson i "$EXISTING_I18N" \
+              '{version: $v, releaseDate: $d, releaseNotes: $n, releaseNotesI18n: $i}' \
+              > "$TMP"
+          else
+            jq -n \
+              --arg v "$VERSION" \
+              --arg d "$DATE" \
+              --arg n "$EXISTING_NOTES" \
+              '{version: $v, releaseDate: $d, releaseNotes: $n}' \
+              > "$TMP"
+          fi
+          mv "$TMP" "$MANIFEST"
+
+      # The GitHub release body is hand-written per release and has drifted to
+      # Chinese-only since v5.5.8, while the manifest's `releaseNotesI18n` always
+      # carries an English translation. Sync the release body to a collapsible
+      # GFM `<details>` layout (one block per language, click to expand) built
+      # from the manifest so the releases page stops falling out of step with the
+      # in-app changelog and doesn't dump a wall of text on first load. This
+      # overwrites the body with the canonical bilingual notes — the manifest is
+      # the single source of truth for release notes on both surfaces.
+      - name: Sync GitHub release body from manifest i18n
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          set -euo pipefail
+          MANIFEST="docs/api/version/index.json"
+          if ! gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1; then
+            echo "Release $TAG not found; skipping body sync."
+            exit 0
+          fi
+          ZH="$(jq -r '.releaseNotesI18n["zh-cn"] // empty' "$MANIFEST")"
+          EN="$(jq -r '.releaseNotesI18n.en // empty' "$MANIFEST")"
+          if [ -z "$EN" ]; then
+            echo "No English notes in manifest; skipping body sync."
+            exit 0
+          fi
+          {
+            printf '<details><summary>中文</summary>\n\n'
+            printf '%s\n' "$ZH"
+            printf '\n</details>\n\n<details><summary>English</summary>\n\n'
+            printf '%s\n' "$EN"
+            printf '\n</details>'
+          } > body.md
+          gh release edit "$TAG" --repo "$REPO" --notes-file body.md
+          echo "Synced collapsible release body for $TAG"
+
+      - name: Commit and push
+        env:
+          TAG_NAME: ${{ steps.tag.outputs.tag }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add docs/api/version/index.json
+          if git diff --staged --quiet; then
+            echo "Manifest already up to date; nothing to commit."
+            exit 0
+          fi
+          git commit -m "docs: publish ${TAG_NAME} release notes"
+          git push origin main

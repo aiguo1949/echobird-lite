@@ -1,0 +1,58 @@
+{
+    "id": "grok",
+    "displayName": "Grok Build (xAI)",
+    "homepage": "https://x.ai/cli",
+    "docs": "https://docs.x.ai/build/overview",
+    "github": "",
+    "install": {
+        "curl (macOS / Linux — recommended)": "curl -fsSL https://x.ai/cli/install.sh | bash",
+        "powershell (Windows — recommended)": "irm https://x.ai/cli/install.ps1 | iex",
+        "curl (Windows — Git Bash / MSYS2 alternative)": "curl -fsSL https://x.ai/cli/install.sh | bash",
+        "specific version": "curl -fsSL https://x.ai/cli/install.sh | bash -s 0.1.42",
+        "deployment key (non-interactive)": "GROK_DEPLOYMENT_KEY=<key> bash <(curl -fsSL https://x.ai/cli/install.sh)",
+        "note": "Grok Build is in beta but openly installable — NO subscription required. Authenticate via `grok login` (browser OAuth, token in ~/.grok/auth.json) or the XAI_API_KEY env var. The curl/PowerShell installer drops `grok` (plus an `agent` ACP entry point) under ~/.grok/bin/ on every OS; on Windows add %USERPROFILE%\\.grok\\bin to PATH. WSL uses the Linux binary. Environment variables: GROK_CHANNEL (stable|alpha|enterprise, default stable), GROK_BIN_DIR (override install path), GROK_PROXY_URL (HTTP proxy), GROK_HOME (override config dir, default ~/.grok)."
+    },
+    "first_run": {
+        "description": "Grok Build authenticates via xAI account OR via an inline API key. EchoBird's model switcher writes the key into ~/.grok/config.toml; the user only needs to run `grok login` when they restore to xAI Official.",
+        "auth_methods": {
+            "browser oauth (default)": "grok login   # opens a browser to authenticate with xAI; token persists in ~/.grok/auth.json",
+            "api key (headless / no-browser)": "export XAI_API_KEY=xai-...   # bypass the browser flow; required for SSH / scripts",
+            "echobird custom model": "Set via the App Manager; EchoBird writes the API key inline into ~/.grok/config.toml (+ ~/.echobird/grok.json relay). `grok` then runs from any terminal, no manual export needed."
+        },
+        "verify": "grok --version   # confirms install; `grok inspect` shows discovered config sources, skills, plugins, hooks, MCP servers"
+    },
+    "cli": {
+        "description": "Grok Build supports a headless flag set similar to other coding CLIs, useful for scripts and remote sessions.",
+        "chat_command": "grok -p \"<message>\"",
+        "detect_command": "grok --version",
+        "supported_flags": [
+            "-p, --single <PROMPT>  send one prompt",
+            "-m, --model <MODEL>    pick a model by name from ~/.grok/config.toml",
+            "-s, --session-id <ID>  create or resume a named headless session",
+            "-r, --resume <ID>      resume an existing session",
+            "-c, --continue         continue the most recent session in the current directory",
+            "--cwd <PATH>           set the working directory",
+            "--output-format <FMT>  plain | json | streaming-json",
+            "--always-approve       auto-approve tool executions (use with care)"
+        ],
+        "acp_mode": "grok agent stdio   # run as an Agent Client Protocol agent over JSON-RPC on stdin/stdout (for IDE / tool integration)",
+        "output_formats": "plain (human-readable text), json (one JSON object at the end), streaming-json (newline-delimited incremental events)"
+    },
+    "network_requirements": {
+        "test_urls": [
+            "https://x.ai/cli/install.sh",
+            "https://docs.x.ai/build/overview"
+        ],
+        "mirrors": {},
+        "blocked_regions": {
+            "zh-CN": "x.ai and docs.x.ai are accessible from mainland China without a VPN, but speeds can be unstable. If the install script download times out, use GROK_PROXY_URL=<your http proxy> before running the curl command."
+        }
+    },
+    "identity_guard": {
+        "description": "Grok Build is xAI's official coding CLI, binary name `grok`. It is DIFFERENT from: the standalone Grok chat app at grok.com (web / iOS / Android), Grokipedia, and any third-party 'grok-cli' npm packages.",
+        "common_confusions": {
+            "grok.com web app": "grok.com is the consumer chat interface for the Grok model — NOT a CLI. Grok Build is a separate terminal coding agent.",
+            "third_party_grok_cli": "Several community npm packages use the name 'grok-cli' but are unrelated to xAI. The ONLY documented install path is the curl/PowerShell installer from https://x.ai/cli (the npm package `@xai-official/grok` exists but is NOT documented by xAI)."
+        }
+    }
+}

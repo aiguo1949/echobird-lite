@@ -1,0 +1,46 @@
+{
+    "id": "dsh",
+    "displayName": "DeepSeek Harness",
+    "homepage": "https://www.deepseek.com/harness/",
+    "docs": "https://deepseek-harness.github.io/deepseek-harness/guide/quickstart",
+    "repository": "https://github.com/deepseek-ai/deepseek-harness",
+    "desktop_docs": "https://github.com/deepseek-ai/deepseek-harness/blob/master/apps/desktop/README.md",
+    "kind": "desktop_app",
+    "platforms": [
+        "windows",
+        "macos"
+    ],
+    "install": {
+        "windows_x64_download": "https://download.deepseek.com/desktop/dsh-latest-windows-x64.exe",
+        "macos_arm64_download": "https://download.deepseek.com/desktop/dsh-latest-macos-arm64.dmg",
+        "note": "Official desktop app with bundled runtimes: no separate Node.js, terminal or browser is required to launch. Requires Windows 10 or later (x64), or macOS 13 or later (Apple Silicon). The official website does not offer Linux, Intel Mac or Windows ARM64 desktop packages. Use the website's latest download URLs instead of pinning a release. Subsequent updates are handled by the desktop app."
+    },
+    "install_flow": {
+        "summary": "Detect existing desktop app -> check OS version and architecture -> download the matching official latest installer -> install -> verify desktop executable.",
+        "agent_steps": [
+            "Detect OS, architecture and existing installation first. Windows: match registry Uninstall DisplayName prefix DeepSeek Harness and resolve DisplayIcon or sibling DeepSeek Harness.exe, including custom install locations. Default: %LOCALAPPDATA%\\Programs\\DeepSeek Harness\\DeepSeek Harness.exe. macOS: check /Applications/DeepSeek Harness.app and ~/Applications/DeepSeek Harness.app. Do not reinstall an existing working desktop app. An npm dsh command does not count as the desktop app.",
+            "Check the OS version as well as CPU architecture: Windows 10 or later on x64, or macOS 13 or later on Apple Silicon. The official website does not offer Linux, Intel Mac or Windows ARM64 desktop packages; report the limitation instead of substituting the CLI.",
+            "Download the matching latest EXE or DMG above from HTTPS on download.deepseek.com to the user's Downloads directory. These are the download links published at https://www.deepseek.com/harness/. If a link is unavailable, recheck the official website for its current link; report failure if no matching package is available instead of guessing a versioned URL. Verify the Windows installer's Authenticode signature before running it; verify the macOS app's code signature and Gatekeeper assessment before launching it.",
+            "Windows x64: run the official installer using Start-Process -FilePath <installer> -ArgumentList '/S' -WindowStyle Hidden -Wait -PassThru. Check its exit code and verify DeepSeek Harness.exe through the registry. If the app is running, ask the user to quit it from the tray before retrying installation. If interactive setup is required, explain the remaining step without claiming completion.",
+            "macOS arm64: mount the official DMG read-only with hdiutil attach -readonly -nobrowse, copy DeepSeek Harness.app to ~/Applications using ditto, detach the image, and verify Contents/MacOS/DeepSeek Harness. Launch using open; handle first-launch approval through normal macOS UI.",
+            "Refresh EchoBird detection and launch the desktop executable directly. Desktop model settings live in ~/.dsh/profiles/desktop/cordis.patch.yml (llm-pi-ai and agent-default-model entries). Credentials use ~/.dsh/.credentials.yaml version 1: API keys under refs, account grants under records. EchoBird supports browser account login, saved-account switching and balance refresh. Apply & Launch restarts the desktop app; existing sessions may retain their model. Do not write new model settings to the legacy settings.yaml file."
+        ],
+        "tell_user": [
+            "The installed desktop version and full application path, or the exact remaining installation step.",
+            "Launch DeepSeek Harness from EchoBird or the desktop shortcut; no npm, terminal or browser is needed to start the app.",
+            "Choose a model in EchoBird and use Apply & Launch to restart with that model for new sessions. The desktop app manages its own updates."
+        ]
+    },
+    "identity_guard": {
+        "description": "DeepSeek Harness in EchoBird means only the official desktop app (DeepSeek Harness.exe / DeepSeek Harness.app). DSH Desktop.exe belongs to independent community wrappers, such as dataelement/dsh-desktop, with separate data directories and profiles; it must not satisfy this official desktop installation request. Earlier @deepseek-ai/dsh npm and dsh web instructions were a temporary distribution path, not an installation option in EchoBird. Do not offer or run them, including as a fallback when a desktop download fails or the target platform has no official desktop package."
+    },
+    "network_requirements": {
+        "test_urls": [
+            "https://www.deepseek.com/harness/",
+            "https://download.deepseek.com/desktop/dsh-latest-windows-x64.exe",
+            "https://download.deepseek.com/desktop/dsh-latest-macos-arm64.dmg",
+            "https://github.com/deepseek-ai/deepseek-harness"
+        ],
+        "mirrors": {}
+    }
+}
