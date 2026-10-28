@@ -1,0 +1,5 @@
+{
+    "configFile": "~/.hermes/config.yaml",
+    "format": "yaml",
+    "custom": true
+}
