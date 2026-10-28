@@ -1,0 +1,832 @@
+// SettingsDialog — Global settings modal (gear button in title bar)
+import React, { useState, useEffect, useCallback, useRef } from 'react';
+import {
+  X,
+  Globe,
+  Download,
+  ExternalLink,
+  Check,
+  Palette,
+  Settings2,
+  Sparkles,
+  Power,
+  Monitor,
+  Gift,
+  Shield,
+} from 'lucide-react';
+import { getVersion } from '@tauri-apps/api/app';
+import { enable, disable, isEnabled } from '@tauri-apps/plugin-autostart';
+import { ViewModeTabs } from './ViewModeTabs';
+import { ViewModeTabGroup } from './ViewModeTabGroup';
+import { useBackgroundStore } from '../stores/backgroundStore';
+import { useI18n } from '../hooks/useI18n';
+import * as api from '../api/tauri';
+import { isNewerVersion } from '../utils/version';
+import { useThemeStore, type ThemeMode } from '../stores/themeStore';
+import { COLOR_THEMES, type ColorThemeId } from '../data/colorThemes';
+import { useUiScaleStore } from '../stores/uiScaleStore';
+import { useEasterEggStore } from '../stores/easterEggStore';
+import { useRewardClaimStore } from '../stores/rewardClaimStore';
+import { RoutingToggle } from './RoutingToggle';
+
+// All supported locales
+const LOCALE_OPTIONS = [
+  { id: 'en', glyph: 'A', label: 'English' },
+  { id: 'zh-Hans', glyph: '简', label: '简体中文' },
+  { id: 'zh-Hant', glyph: '繁', label: '繁體中文' },
+  { id: 'ja', glyph: 'あ', label: '日本語' },
+];
+
+type SettingsTab = 'general' | 'appearance' | 'language';
+
+const UI_SCALE_TICKS = [70, 80, 90, 100, 110, 120, 130, 140, 150];
+
+interface SettingsDialogProps {
+  isOpen: boolean;
+  onClose: () => void;
+  locale: string;
+  onLocaleChange: (locale: string) => void;
+}
+
+export const SettingsDialog: React.FC<SettingsDialogProps> = ({
+  isOpen,
+  onClose,
+  locale,
+  onLocaleChange,
+}) => {
+  const { t } = useI18n();
+  const [isAnimatingOut, setIsAnimatingOut] = useState(false);
+  const [activeTab, setActiveTab] = useState<SettingsTab>('general');
+  const [updateStatus, setUpdateStatus] = useState<'latest' | 'available'>('latest');
+  const [latestVersion, setLatestVersion] = useState<string | null>(null);
+  const [appVersion, setAppVersion] = useState<string>('');
+  // In-app self-update (Windows) progress state.
+  const [installing, setInstalling] = useState(false);
+  const [installPhase, setInstallPhase] = useState<
+    'speed_test' | 'downloading' | 'launching' | 'error' | null
+  >(null);
+  const [installPct, setInstallPct] = useState(0);
+  const [closeToTray, setCloseToTray] = useState<boolean | null>(false);
+  const [sensitiveInfoProtection, setSensitiveInfoProtection] = useState(false);
+  const [protectionReady, setProtectionReady] = useState(false);
+  const [protectionPending, setProtectionPending] = useState(false);
+  const [protectionError, setProtectionError] = useState(false);
+  const easterEgg = useEasterEggStore((state) => state.enabled);
+  const setEasterEgg = useEasterEggStore((state) => state.setEnabled);
+  const autoClaimRewards = useRewardClaimStore((state) => state.enabled);
+  const setAutoClaimRewards = useRewardClaimStore((state) => state.setEnabled);
+  const background = useBackgroundStore((state) => state.mode);
+  const setBackground = useBackgroundStore((state) => state.setMode);
+  // Launch-at-startup toggle. Source of truth is the autostart plugin's OS
+  // registration (isEnabled), queried each time the dialog opens, so changes
+  // made outside the app (msconfig, Login Items) are reflected. Default off.
+  const [launchAtStartup, setLaunchAtStartup] = useState(false);
+  const themeMode = useThemeStore((s) => s.mode);
+  const setThemeMode = useThemeStore((s) => s.setMode);
+  const colorTheme = useThemeStore((s) => s.colorTheme);
+  const setColorTheme = useThemeStore((s) => s.setColorTheme);
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const uiScale = useUiScaleStore();
+  const scalePreference = uiScale.requestedPreference ?? uiScale.preference;
+  const scalePercent =
+    scalePreference === 'auto' ? Math.round(uiScale.scale * 100) : scalePreference;
+  const [dragPercent, setDragPercent] = useState<number | null>(null);
+  const sliderPercent = dragPercent ?? scalePercent;
+  const scaleDrag = useRef<{
+    screenX: number;
+    percent: number;
+    width: number;
+    tick: number;
+  } | null>(null);
+  const changeScale = (percent: number) => {
+    void uiScale.setPreference(percent);
+  };
+  const finishScaleDrag = () => {
+    scaleDrag.current = null;
+    setDragPercent(null);
+  };
+  if (dragPercent !== null && (!isOpen || activeTab !== 'general')) {
+    setDragPercent(null);
+  }
+
+  useEffect(() => {
+    // Removing the slider during a drag can skip its lost-pointer-capture handler.
+    scaleDrag.current = null;
+  }, [isOpen, activeTab]);
+
+  // Read the installed binary version from Tauri at runtime — single source of truth (tauri.conf.json).
+  useEffect(() => {
+    getVersion()
+      .then(setAppVersion)
+      .catch(() => setAppVersion(''));
+  }, []);
+
+  // Load backend settings each time the dialog opens.
+  useEffect(() => {
+    let active = true;
+    if (isOpen) {
+      void Promise.resolve().then(() => {
+        if (active) {
+          setProtectionReady(false);
+          setProtectionError(false);
+        }
+      });
+      // Reflect the real OS autostart registration (may have been toggled
+      // outside the app). Default to false if the query fails.
+      isEnabled()
+        .then(setLaunchAtStartup)
+        .catch(() => {});
+      api
+        .getSettings()
+        .then((settings) => {
+          if (!active) return;
+          setSensitiveInfoProtection(settings.sensitiveInfoProtection === true);
+          setProtectionReady(true);
+          // null ("always ask") is a real selectable value, not a missing
+          // field — the backend stores it as Option<bool>=None. When the user
+          // explicitly chose it (closeWindowBehaviorSet === true), preserve
+          // null so the dialog reflects their choice instead of resetting to
+          // "quit directly" (false). Only fall back to false for the genuinely
+          // unset case (never configured), matching the original default.
+          setCloseToTray(
+            settings.closeWindowBehaviorSet && settings.closeToTray === null
+              ? null
+              : (settings.closeToTray ?? false)
+          );
+        })
+        .catch(() => {
+          if (active) setProtectionError(true);
+        });
+    }
+    return () => {
+      active = false;
+    };
+  }, [isOpen]);
+
+  const handleProtectionChange = async (value: boolean) => {
+    if (!protectionReady || protectionPending) return;
+    setProtectionPending(true);
+    setProtectionError(false);
+    try {
+      const settings = await api.getSettings();
+      await api.saveSettings({ ...settings, sensitiveInfoProtection: value });
+      setSensitiveInfoProtection(value);
+    } catch {
+      setProtectionError(true);
+    } finally {
+      setProtectionPending(false);
+    }
+  };
+
+  // Toggle launch-at-startup: register/unregister the OS autostart entry.
+  // The entry launches with --minimized so a boot start stays in the tray.
+  const handleLaunchAtStartupChange = useCallback((value: boolean) => {
+    setLaunchAtStartup(value);
+    if (value) {
+      enable().catch(() => setLaunchAtStartup(false));
+    } else {
+      disable().catch(() => setLaunchAtStartup(true));
+    }
+  }, []);
+
+  // Save closeToTray setting when it changes
+  const handleCloseToTrayChange = useCallback(async (value: boolean | null) => {
+    setCloseToTray(value);
+    const settings = await api.getSettings();
+    // Mark the close behavior as explicitly chosen. This both suppresses the
+    // first-time onboarding dialog and — critically — prevents that dialog from
+    // later overwriting an explicit "always ask" (null) selection.
+    await api.saveSettings({
+      ...settings,
+      closeToTray: value,
+      closeWindowBehaviorSet: true,
+    });
+  }, []);
+
+  // Close with animation
+  const handleClose = useCallback(() => {
+    setIsAnimatingOut(true);
+    setTimeout(() => {
+      setIsAnimatingOut(false);
+      onClose();
+    }, 200);
+  }, [onClose]);
+
+  // ESC to close
+  useEffect(() => {
+    if (!isOpen) return;
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') handleClose();
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [isOpen, handleClose]);
+
+  // Auto-check for updates when the dialog opens — no manual button. Version
+  // truth is the canonical manifest (echobird.ai/api/version/index.json). Any
+  // failure (offline / unreachable) silently stays on "latest" — no error UI,
+  // just no update offered.
+  useEffect(() => {
+    if (!isOpen || !appVersion) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await fetch('https://echobird.ai/api/version/index.json');
+        if (!res.ok) return;
+        const data = await res.json();
+        if (cancelled) return;
+        if (data.version && isNewerVersion(data.version, appVersion)) {
+          setLatestVersion(data.version);
+          setUpdateStatus('available');
+        } else {
+          setUpdateStatus('latest');
+        }
+      } catch {
+        /* offline / unreachable — stay on "latest", no update offered */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [isOpen, appVersion]);
+
+  // Click "Update to vX": on Windows, download + launch the installer in-app
+  // (the app exits as the wizard opens); elsewhere — or if the download fails —
+  // open the download page in the browser instead.
+  const handleUpdate = useCallback(async () => {
+    if (!latestVersion) return;
+    const downloadPage = 'https://echobird.ai/';
+    if (!navigator.userAgent.includes('Windows')) {
+      await api.openExternal(downloadPage);
+      return;
+    }
+    setInstalling(true);
+    setInstallPhase('speed_test');
+    setInstallPct(0);
+    let unlisten: (() => void) | undefined;
+    try {
+      unlisten = await api.onSelfUpdateProgress((p) => {
+        setInstallPhase(p.status);
+        setInstallPct(p.percent);
+      });
+      await api.downloadAndInstallUpdate(latestVersion);
+      // Success: the installer launched and the app is about to exit — leave
+      // the progress UI as-is until the window closes.
+    } catch {
+      await api.openExternal(downloadPage);
+      setInstalling(false);
+      setInstallPhase(null);
+    } finally {
+      unlisten?.();
+    }
+  }, [latestVersion]);
+
+  if (!isOpen) return null;
+
+  return (
+    <div
+      className={`fixed inset-0 z-[9998] flex items-center justify-center transition-all duration-200 ${
+        isAnimatingOut ? 'opacity-0' : 'opacity-100'
+      }`}
+    >
+      {/* Backdrop */}
+      <div className="absolute inset-0 bg-black/55" onClick={handleClose} />
+
+      {/* Dialog */}
+      <div
+        ref={dialogRef}
+        className={`relative flex h-[560px] max-h-[88vh] w-[720px] max-w-[92vw] overflow-hidden rounded-xl border border-cyber-border/30 bg-cyber-bg shadow-2xl transition-all duration-200 ${
+          isAnimatingOut ? 'scale-95 opacity-0' : 'scale-100 opacity-100'
+        }`}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <aside className="flex w-[168px] flex-shrink-0 flex-col p-3">
+          <div className="px-3 pt-2 pb-4 text-[12px] font-semibold tracking-wide text-cyber-text-muted">
+            {t('settings.title')}
+          </div>
+          <nav className="space-y-1">
+            {(
+              [
+                ['general', Settings2, t('settings.general')],
+                ['appearance', Palette, t('settings.appearance')],
+                ['language', Globe, t('settings.language')],
+              ] as const
+            ).map(([id, Icon, label]) => (
+              <button
+                key={id}
+                type="button"
+                onClick={() => setActiveTab(id)}
+                className={`flex h-10 w-full items-center gap-2.5 rounded-md px-3 text-[14px] transition-colors ${
+                  activeTab === id
+                    ? 'bg-cyber-elevated font-semibold text-cyber-text'
+                    : 'text-cyber-text-secondary hover:bg-cyber-elevated/60 hover:text-cyber-text'
+                }`}
+              >
+                <Icon size={16} />
+                {label}
+              </button>
+            ))}
+          </nav>
+
+          <div className="mt-auto border-t border-cyber-border/50 px-3 pt-3">
+            <div className="mb-2 text-[12px] font-mono text-cyber-text-muted">
+              {appVersion ? `v${appVersion}` : '—'}
+            </div>
+            <button
+              type="button"
+              onClick={() => api.openExternal('https://echobird.ai')}
+              className="flex items-center gap-1.5 text-[13px] font-medium text-cyber-text-secondary transition-colors hover:text-cyber-text"
+            >
+              EchoBird <ExternalLink size={12} />
+            </button>
+          </div>
+        </aside>
+
+        <section className="flex min-w-0 flex-1 flex-col">
+          <header className="flex h-[58px] flex-shrink-0 items-center justify-between border-b border-cyber-border/50 px-5">
+            <span className="text-[16px] font-semibold text-cyber-text">
+              {t(`settings.${activeTab}`)}
+            </span>
+            <button
+              type="button"
+              onClick={handleClose}
+              className="text-cyber-text-secondary transition-colors hover:text-cyber-text"
+            >
+              <X size={18} />
+            </button>
+          </header>
+
+          {/* Content */}
+          <div className="page-scroll flex-1 overflow-y-auto px-5 py-5">
+            {activeTab === 'general' ? (
+              <div className="space-y-5">
+                <div className="space-y-2.5">
+                  <div className="flex items-center justify-between gap-4">
+                    <label
+                      htmlFor="ui-scale"
+                      className="flex items-center gap-2 text-[14px] font-medium text-cyber-text-secondary"
+                    >
+                      <Monitor size={14} />
+                      {t('settings.uiScale')}
+                    </label>
+                    <div className="flex items-center gap-3">
+                      <button
+                        type="button"
+                        aria-pressed={scalePreference === 'auto'}
+                        onClick={() => void uiScale.setPreference('auto')}
+                        className={`rounded px-2.5 py-1 text-[13px] transition-colors ${scalePreference === 'auto' ? 'bg-cyber-accent/10 text-cyber-accent' : 'text-cyber-text-secondary hover:bg-cyber-elevated'}`}
+                      >
+                        {t('settings.uiScaleAuto')}
+                      </button>
+                      <span className="w-12 text-right text-[14px] tabular-nums text-cyber-text">
+                        {scalePercent}%
+                      </span>
+                    </div>
+                  </div>
+                  <div>
+                    <input
+                      id="ui-scale"
+                      type="range"
+                      min={70}
+                      max={150}
+                      step="any"
+                      value={sliderPercent}
+                      aria-valuetext={`${scalePercent}%`}
+                      className="ui-scale-slider relative block w-full"
+                      style={
+                        {
+                          '--ui-scale-progress': `${((sliderPercent - 70) / 80) * 100}%`,
+                        } as React.CSSProperties
+                      }
+                      onChange={(event) => {
+                        if (!scaleDrag.current) changeScale(Number(event.target.value));
+                      }}
+                      onKeyDown={(event) => {
+                        let percent: number;
+                        switch (event.key) {
+                          case 'ArrowRight':
+                          case 'ArrowUp':
+                          case 'PageUp':
+                            percent = scalePercent + 10;
+                            break;
+                          case 'ArrowLeft':
+                          case 'ArrowDown':
+                          case 'PageDown':
+                            percent = scalePercent - 10;
+                            break;
+                          case 'Home':
+                            percent = 70;
+                            break;
+                          case 'End':
+                            percent = 150;
+                            break;
+                          default:
+                            return;
+                        }
+                        event.preventDefault();
+                        if (!scaleDrag.current) changeScale(percent);
+                      }}
+                      onPointerDown={(event) => {
+                        if (event.button !== 0) return;
+                        event.preventDefault();
+                        event.currentTarget.focus();
+                        event.currentTarget.setPointerCapture(event.pointerId);
+                        const rect = event.currentTarget.getBoundingClientRect();
+                        const width = rect.width - 14;
+                        const percent = Math.max(
+                          70,
+                          Math.min(150, 70 + ((event.clientX - rect.left - 7) / width) * 80)
+                        );
+                        const tick = Math.round(percent / 10) * 10;
+                        // Keep a screen-space baseline while zoom and window bounds move the track.
+                        scaleDrag.current = {
+                          screenX: event.screenX,
+                          percent,
+                          width: width * uiScale.scale,
+                          tick,
+                        };
+                        setDragPercent(percent);
+                        changeScale(tick);
+                      }}
+                      onPointerMove={(event) => {
+                        const drag = scaleDrag.current;
+                        if (drag) {
+                          const percent = Math.max(
+                            70,
+                            Math.min(
+                              150,
+                              drag.percent + ((event.screenX - drag.screenX) / drag.width) * 80
+                            )
+                          );
+                          setDragPercent(percent);
+                          // The thumb moves freely; only crossing a tick changes the UI/window.
+                          const tick =
+                            percent >= drag.tick
+                              ? Math.floor(percent / 10) * 10
+                              : Math.ceil(percent / 10) * 10;
+                          if (tick !== drag.tick) {
+                            drag.tick = tick;
+                            changeScale(tick);
+                          }
+                        }
+                      }}
+                      onPointerUp={finishScaleDrag}
+                      onPointerCancel={finishScaleDrag}
+                      onLostPointerCapture={finishScaleDrag}
+                    />
+                    <div
+                      aria-hidden={true}
+                      data-scale-ticks={true}
+                      className="pointer-events-none relative mx-[7px] mt-1 h-2"
+                    >
+                      {UI_SCALE_TICKS.map((tick) => (
+                        <span
+                          key={tick}
+                          data-scale-tick={tick}
+                          style={{ left: `${((tick - 70) / 80) * 100}%` }}
+                          className={`absolute top-0 w-0.5 -translate-x-1/2 rounded-full ${tick === 100 ? 'h-1.5 bg-cyber-text-secondary/70' : 'h-1 bg-cyber-text-muted/45'}`}
+                        />
+                      ))}
+                    </div>
+                    <div className="relative mx-[7px] h-4 text-[12px] leading-4 tabular-nums text-cyber-text-muted">
+                      <span className="absolute left-0">70%</span>
+                      <span className="absolute left-[37.5%] -translate-x-1/2 text-cyber-text-secondary">
+                        100%
+                      </span>
+                      <span className="absolute right-0">150%</span>
+                    </div>
+                  </div>
+                  {uiScale.failed && (
+                    <p role="alert" className="text-[13px] text-red-400">
+                      {t('settings.uiScaleError')}
+                    </p>
+                  )}
+                </div>
+
+                <div className="h-px bg-cyber-border/50" />
+
+                <div className="space-y-2.5">
+                  <div className="flex items-center gap-2">
+                    <X size={14} className="text-cyber-text-secondary" />
+                    <span className="text-[14px] font-medium text-cyber-text-secondary">
+                      {t('settings.closeWindowBehavior')}
+                    </span>
+                  </div>
+                  <ViewModeTabGroup className="view-mode-tabs settings-segment-tabs flex border border-cyber-border rounded-button overflow-hidden">
+                    {(
+                      [
+                        [false, t('settings.closeDirectly')],
+                        [true, t('settings.closeToTray')],
+                        [null, t('settings.alwaysAsk')],
+                      ] as const
+                    ).map(([value, label]) => (
+                      <button
+                        key={String(value)}
+                        onClick={() => handleCloseToTrayChange(value)}
+                        aria-pressed={closeToTray === value}
+                        className={`view-mode-tab flex-1 h-11 flex items-center justify-center text-[13px] transition-[color] ${
+                          closeToTray === value
+                            ? 'bg-cyber-elevated text-cyber-text font-semibold'
+                            : 'text-cyber-text-secondary hover:text-cyber-text'
+                        }`}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </ViewModeTabGroup>
+                </div>
+
+                <div className="h-px bg-cyber-border/50" />
+
+                <div className="grid grid-cols-2 gap-8">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <Power size={14} className="text-cyber-text-secondary" />
+                      <span className="text-[14px] font-medium text-cyber-text-secondary">
+                        {t('settings.launchAtStartup')}
+                      </span>
+                    </div>
+                    <ToggleSwitch
+                      checked={launchAtStartup}
+                      onChange={handleLaunchAtStartupChange}
+                    />
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <Sparkles size={14} className="text-cyber-text-secondary" />
+                      <span className="text-[14px] font-medium text-cyber-text-secondary">
+                        {t('settings.easterEgg')}
+                      </span>
+                    </div>
+                    <ToggleSwitch checked={easterEgg} onChange={setEasterEgg} />
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <Gift size={14} className="text-cyber-text-secondary" />
+                      <span className="text-[14px] font-medium text-cyber-text-secondary">
+                        {t('settings.autoClaimRewards')}
+                      </span>
+                    </div>
+                    <ToggleSwitch checked={autoClaimRewards} onChange={setAutoClaimRewards} />
+                  </div>
+                  <div className="min-w-0">
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-2">
+                        <Shield size={14} className="text-cyber-text-secondary shrink-0" />
+                        <span className="text-[14px] font-medium text-cyber-text-secondary">
+                          {t('settings.sensitiveInfoProtection')}
+                        </span>
+                      </div>
+                      <RoutingToggle
+                        className="flex-1 flex-row-reverse justify-between"
+                        label={t('settings.sensitiveInfoProtection')}
+                        hideLabel
+                        hint={t('settings.sensitiveInfoProtectionHint')}
+                        checked={sensitiveInfoProtection}
+                        disabled={!protectionReady}
+                        pending={protectionPending}
+                        onChange={(value) => void handleProtectionChange(value)}
+                      />
+                    </div>
+                    {protectionError && (
+                      <p role="alert" className="mt-1 text-xs text-red-400">
+                        {t('settings.sensitiveInfoProtectionError')}
+                      </p>
+                    )}
+                  </div>
+                </div>
+
+                <div className="h-px bg-cyber-border/50" />
+
+                <div className="space-y-2.5">
+                  <div className="flex items-center gap-2">
+                    <Download size={14} className="text-cyber-text-secondary" />
+                    <span className="text-[14px] font-medium text-cyber-text-secondary">
+                      {t('settings.updates')}
+                    </span>
+                  </div>
+                  <div className="h-10 flex items-center">
+                    {installing ? (
+                      <div className="relative w-full h-10 overflow-hidden border border-cyber-accent/40 bg-cyber-surface rounded-button">
+                        <div
+                          className="absolute inset-y-0 left-0 bg-cyber-accent/20 transition-[width] duration-200"
+                          style={{
+                            width: `${
+                              installPhase === 'launching'
+                                ? 100
+                                : installPhase === 'speed_test'
+                                  ? 8
+                                  : installPct
+                            }%`,
+                          }}
+                        />
+                        <div className="relative flex items-center justify-center h-full text-[13px] font-medium text-cyber-text">
+                          {installPhase === 'launching'
+                            ? t('settings.updateLaunching')
+                            : installPhase === 'speed_test'
+                              ? `${t('settings.updateDownloading')}…`
+                              : `${t('settings.updateDownloading')} ${installPct}%`}
+                        </div>
+                      </div>
+                    ) : updateStatus === 'available' ? (
+                      <button
+                        onClick={handleUpdate}
+                        className="flex items-center justify-center gap-1.5 w-full h-10 text-[14px] font-semibold border border-cyber-accent/50 bg-cyber-surface text-cyber-accent hover:border-cyber-accent transition-colors rounded-button"
+                      >
+                        {t('settings.updateTo')} v{latestVersion} <Download size={13} />
+                      </button>
+                    ) : (
+                      <div className="w-full h-10 flex items-center justify-center gap-1.5 text-[14px] text-cyber-text border border-cyber-border/30 bg-cyber-surface rounded-button">
+                        <span className="text-cyber-accent">✓</span> {t('settings.latestVersion')}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            ) : activeTab === 'appearance' ? (
+              <div className="space-y-5">
+                <div className="flex flex-wrap items-center justify-between gap-4">
+                  <span className="text-[12px] font-semibold text-cyber-text-secondary">
+                    {t('settings.background')}
+                  </span>
+                  <ViewModeTabs
+                    value={background}
+                    onChange={setBackground}
+                    options={[
+                      { value: 'none', label: t('settings.backgroundNone') },
+                      { value: 'characters', label: t('settings.backgroundCharacters') },
+                      { value: 'carbon', label: t('settings.backgroundCarbon') },
+                      { value: 'monogram', label: t('settings.backgroundMonogram') },
+                    ]}
+                  />
+                </div>
+
+                <div className="h-px bg-cyber-border/50" />
+
+                <div className="flex items-center justify-between gap-4">
+                  <span className="text-[12px] font-semibold text-cyber-text-secondary">
+                    {t('settings.colorTheme')}
+                  </span>
+                  <ThemeSegmented
+                    value={themeMode}
+                    onChange={setThemeMode}
+                    labels={{
+                      light: t('settings.themeLight'),
+                      dark: t('settings.themeDark'),
+                      system: t('settings.themeSystem'),
+                    }}
+                  />
+                </div>
+
+                <ColorThemePicker
+                  value={colorTheme}
+                  mode={themeMode}
+                  locale={locale}
+                  onChange={setColorTheme}
+                />
+              </div>
+            ) : (
+              <div className="grid grid-cols-2 gap-2">
+                {LOCALE_OPTIONS.map((option) => (
+                  <button
+                    key={option.id}
+                    type="button"
+                    lang={option.id}
+                    aria-pressed={locale === option.id}
+                    onClick={() => onLocaleChange(option.id)}
+                    className={`flex min-h-12 items-center gap-2.5 rounded-lg border px-3 py-2.5 text-[13px] transition-colors ${locale === option.id ? 'border-cyber-border bg-cyber-elevated text-cyber-text' : 'border-transparent text-cyber-text-secondary hover:bg-cyber-elevated/60 hover:text-cyber-text'}`}
+                  >
+                    <span
+                      aria-hidden="true"
+                      className="w-[22px] flex-shrink-0 text-center text-[15px]"
+                    >
+                      {option.glyph}
+                    </span>
+                    <span className="flex-1 text-left">{option.label}</span>
+                    {locale === option.id && <Check aria-hidden="true" size={14} />}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        </section>
+      </div>
+    </div>
+  );
+};
+
+// Compact on/off switch.
+const ToggleSwitch: React.FC<{ checked: boolean; onChange: (v: boolean) => void }> = ({
+  checked,
+  onChange,
+}) => (
+  <button
+    type="button"
+    role="switch"
+    aria-checked={checked}
+    onClick={() => onChange(!checked)}
+    className={`relative inline-flex h-5 w-9 flex-shrink-0 items-center rounded-full outline-none transition-colors ${
+      checked ? 'bg-cyber-accent' : 'bg-cyber-border'
+    }`}
+  >
+    <span
+      className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white transition-transform duration-200 ${
+        checked ? 'translate-x-[18px]' : 'translate-x-1'
+      }`}
+    />
+  </button>
+);
+
+// Compact segmented tabs for the theme mode: Light / Dark / System.
+const ThemeSegmented: React.FC<{
+  value: ThemeMode;
+  onChange: (mode: ThemeMode) => void;
+  labels: { light: string; dark: string; system: string };
+}> = ({ value, onChange, labels }) => {
+  const opts: Array<{ id: ThemeMode; label: string }> = [
+    { id: 'light', label: labels.light },
+    { id: 'dark', label: labels.dark },
+    { id: 'system', label: labels.system },
+  ];
+  return (
+    <ViewModeTabGroup className="view-mode-tabs settings-segment-tabs flex flex-shrink-0 border border-cyber-border rounded-button overflow-hidden">
+      {opts.map((o) => {
+        const active = value === o.id;
+        return (
+          <button
+            key={o.id}
+            type="button"
+            onClick={() => onChange(o.id)}
+            aria-pressed={active}
+            className={`view-mode-tab whitespace-nowrap px-3 py-1.5 text-[12px] font-semibold transition-[color] ${
+              active
+                ? 'bg-cyber-elevated text-cyber-text'
+                : 'text-cyber-text-muted hover:text-cyber-text-secondary'
+            }`}
+          >
+            {o.label}
+          </button>
+        );
+      })}
+    </ViewModeTabGroup>
+  );
+};
+
+const ColorThemePicker: React.FC<{
+  value: ColorThemeId;
+  mode: ThemeMode;
+  locale: string;
+  onChange: (theme: ColorThemeId) => void;
+}> = ({ value, mode, locale, onChange }) => (
+  <div className="grid max-h-[360px] grid-cols-6 gap-x-3 gap-y-3.5 overflow-y-auto pr-1">
+    {COLOR_THEMES.map((theme) => {
+      const active = value === theme.id;
+      const label = locale.startsWith('zh')
+        ? theme.labelZh
+        : locale === 'ja'
+          ? theme.labelJa
+          : theme.labelEn;
+      return (
+        <button
+          key={theme.id}
+          type="button"
+          aria-pressed={active}
+          aria-label={label}
+          onClick={() => onChange(theme.id)}
+          className="flex min-w-0 flex-col gap-1.5 bg-transparent"
+        >
+          <span
+            className={`relative flex h-[46px] w-full overflow-hidden rounded-lg border-2 ${
+              active ? 'border-cyber-accent' : 'border-transparent'
+            }`}
+          >
+            <span
+              className="block h-full flex-1"
+              style={{
+                backgroundImage: `linear-gradient(135deg, ${mode === 'dark' ? theme.dark.canvas : theme.light.canvas}, ${mode === 'dark' ? theme.dark.tertiary : theme.light.tertiary})`,
+              }}
+            />
+            <span
+              className="block h-full flex-1"
+              style={{
+                backgroundImage: `linear-gradient(135deg, ${mode === 'system' ? theme.dark.canvas : mode === 'dark' ? theme.dark.tertiary : theme.light.tertiary}, ${mode === 'system' ? theme.dark.tertiary : mode === 'dark' ? theme.dark.canvas : theme.light.canvas})`,
+              }}
+            />
+            {active && (
+              <span className="absolute top-1 right-1 flex h-[15px] w-[15px] items-center justify-center rounded-full bg-cyber-accent text-white">
+                <Check size={9} strokeWidth={3.5} />
+              </span>
+            )}
+          </span>
+          <span
+            className={`truncate text-center text-[11px] ${
+              active ? 'text-cyber-text' : 'text-cyber-text-secondary'
+            }`}
+          >
+            {label}
+          </span>
+        </button>
+      );
+    })}
+  </div>
+);
