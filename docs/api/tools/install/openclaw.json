@@ -1,0 +1,35 @@
+{
+    "id": "openclaw",
+    "displayName": "OpenClaw",
+    "homepage": "https://openclaw.ai/",
+    "docs": "https://docs.openclaw.ai/install",
+    "github": "https://github.com/openclaw/openclaw",
+    "install": {
+        "curl (macOS / Linux / WSL2 — recommended, no onboarding)": "curl -fsSL https://openclaw.ai/install.sh | bash -s -- --no-onboard",
+        "powershell (Windows — recommended, no onboarding)": "& ([scriptblock]::Create((iwr -useb https://openclaw.ai/install.ps1))) -NoOnboard",
+        "npm (npm 11.16+ / 12)": "npm install -g openclaw@latest --allow-scripts=openclaw",
+        "npm (npm 11.15 and earlier)": "npm install -g openclaw@latest",
+        "from source": "git clone https://github.com/openclaw/openclaw.git && cd openclaw && pnpm install && pnpm ui:build && pnpm build",
+        "note": "Prefer the official installer, which handles Node provisioning and package-manager compatibility. Current install docs require Node 24.16+ (24.x) or 26.1+ and recommend Node 26. For a manual npm install, check `node --version`, `npm --version`, and `npm view openclaw@latest engines --json`: the published package can differ from the docs. npm 12 blocks lifecycle scripts by default; npm 11.16+ accepts --allow-scripts=openclaw, while older npm must omit it. Do not run interactive onboarding inside shell_exec."
+    },
+    "install_flow": {
+        "summary": "Install without onboarding, verify the CLI, then hand first-run onboarding to the user’s terminal.",
+        "agent_steps": [
+            "Detect OS and architecture. Use the matching official installer with --no-onboard / -NoOnboard in a non-interactive shell.",
+            "For manual npm installation, check the Node engine range of the package being installed and the npm version before choosing the command. With an approved registry mirror, append --registry=https://registry.npmmirror.com to that same version-appropriate command.",
+            "Run `openclaw --version` after installation. A successful package install does not confirm Gateway setup.",
+            "For a fresh install, tell the user to run `openclaw onboard --install-daemon` in their own terminal. Do not start this interactive wizard through shell_exec. Preserve an existing installation’s configuration; an upgrade does not automatically require onboarding again."
+        ]
+    },
+    "verify": "openclaw --version   # confirms the binary is on PATH; `openclaw onboard` must still be run once (see install_flow)",
+    "network_requirements": {
+        "test_urls": [
+            "https://openclaw.ai",
+            "https://registry.npmjs.org",
+            "https://github.com/openclaw/openclaw"
+        ],
+        "mirrors": {
+            "npm": "After the user confirms the mirror fallback, append --registry=https://registry.npmmirror.com to the npm command selected for their npm version; retain --allow-scripts=openclaw on npm 11.16+ / 12."
+        }
+    }
+}

@@ -1,0 +1,33 @@
+{
+    "id": "claudecode",
+    "displayName": "Claude Code (CLI)",
+    "homepage": "https://claude.ai/code",
+    "docs": "https://code.claude.com/docs/en/setup",
+    "github": "https://github.com/anthropics/claude-code",
+    "install": {
+        "curl (macOS / Linux — recommended)": "curl -fsSL https://claude.ai/install.sh | bash",
+        "powershell (Windows — recommended)": "irm https://claude.ai/install.ps1 | iex",
+        "winget (Windows)": "winget install Anthropic.ClaudeCode",
+        "npm (all platforms — still officially listed)": "npm install -g @anthropic-ai/claude-code",
+        "note": "Native curl / PowerShell installs auto-update. Homebrew and WinGet require their package-manager upgrade commands by default. npm is still supported and installs the same native binary through optional dependencies; it requires Node.js 22+ at install time. Keep optional dependencies and the package postinstall enabled. Linux apt / dnf / apk instructions are also available at the official setup docs. Verify installation before starting account setup.",
+        "brew (macOS)": "brew install --cask claude-code"
+    },
+    "network_requirements": {
+        "test_urls": ["https://claude.ai", "https://github.com/anthropics/claude-code"],
+        "blocked_regions": {
+            "zh-CN": "Claude Code requires direct access to claude.ai — this site is blocked in mainland China. Installation success rate is nearly zero without a VPN/proxy. There are NO mirror alternatives for Claude Code.",
+            "zh-TW": "Claude Code requires access to claude.ai. If your network cannot reach it, you may need a proxy."
+        },
+        "mirrors": {}
+    },
+    "first_run": {
+        "description": "Confirm installation with `claude --version` and `claude doctor`. For first-time authentication, launch `claude` in the user’s terminal and follow the account or configured-provider flow.",
+        "settings_json": {
+            "path": "~/.claude/settings.json",
+            "description": "Current permission rules use permissions.allow / permissions.ask / permissions.deny. The old top-level allowedTools field is not the settings schema. Installation alone does not require granting tools or rewriting onboarding state. Preserve existing settings; configure task-specific permissions only when needed for an authorized task.",
+            "docs": "https://code.claude.com/docs/en/settings"
+        },
+        "verify": "claude --version",
+        "diagnostics": "claude doctor"
+    }
+}
